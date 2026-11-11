@@ -1,0 +1,547 @@
+#!/usr/bin/env python3
+"""
+serveradmin - Unified Linux Server Administration & Deployment Platform CLI
+Enterprise Fleet • Ubuntu • Bash • Docker • Nginx • CIS Security Compliance • Cron
+"""
+
+import sys
+import os
+import argparse
+import json
+
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+sys.path.insert(0, PROJECT_ROOT)
+
+from core import (
+    HostConnection,
+    SystemInspector,
+    UserManager,
+    ServiceManager,
+    SecurityAuditor,
+    FleetManager,
+    ProcessManager,
+    AlertNotifier,
+    ComplianceAuditor,
+    CronManager,
+    LogExplorer,
+    ContainerInspector
+)
+
+BLUE = "\033[1;34m"
+GREEN = "\033[1;32m"
+YELLOW = "\033[1;33m"
+RED = "\033[1;31m"
+CYAN = "\033[1;36m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+
+def print_banner():
+    banner = f"""{CYAN}
+  ╔═══════════════════════════════════════════════════════════════════╗
+  ║    ServerAdmin Engine & Deployment Automation Lab Platform        ║
+  ║      Enterprise Fleet • Ubuntu • Bash • Docker • Nginx • Sec      ║
+  ╚═══════════════════════════════════════════════════════════════════╝{RESET}"""
+    print(banner)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="serveradmin",
+        description="Enterprise Linux Server Administration & Deployment Automation Platform"
+    )
+
+    # Global connection arguments
+    parser.add_argument("--remote", "-r", help="Remote SSH host/IP")
+    parser.add_argument("--user", "-u", default="ubuntu", help="Remote SSH user (Default: ubuntu)")
+    parser.add_argument("--key", "-i", help="Path to SSH private key identity file")
+    parser.add_argument("--port", "-p", type=int, default=22, help="SSH port (Default: 22)")
+    parser.add_argument("--node", help="Select target node by ID or name from fleet inventory")
+    parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
+    subparsers = parser.add_subparsers(dest="command", help="Available Administration Commands")
+
+    # Status
+    subparsers.add_parser("status", help="Display comprehensive host and platform status")
+
+    # Fleet Management
+    fleet_parser = subparsers.add_parser("fleet", help="Multi-node inventory and fleet control")
+    fleet_sub = fleet_parser.add_subparsers(dest="fleet_action")
+    fleet_sub.add_parser("list", help="List all nodes in inventory")
+    ping_cmd = fleet_sub.add_parser("ping", help="Ping nodes and measure SSH latency")
+    ping_cmd.add_argument("node_id", nargs="?", help="Specific node ID to ping (or all)")
+    
+    add_node_cmd = fleet_sub.add_parser("add", help="Add new server node to fleet")
+    add_node_cmd.add_argument("name", help="Display name for the server")
+    add_node_cmd.add_argument("host", help="IP address or FQDN hostname")
+    add_node_cmd.add_argument("--user", "-u", default="ubuntu", help="SSH user (Default: ubuntu)")
+    add_node_cmd.add_argument("--key", "-i", default="", help="Path to SSH private key")
+    add_node_cmd.add_argument("--port", "-p", type=int, default=22, help="SSH port")
+    add_node_cmd.add_argument("--tags", "-t", help="Comma-separated tags (e.g. web,prod)")
+
+    rm_node_cmd = fleet_sub.add_parser("remove", help="Remove server node from fleet")
+    rm_node_cmd.add_argument("node_id", help="Node ID to remove")
+
+    # Process Management
+    proc_parser = subparsers.add_parser("process", help="Process inspection and control")
+    proc_sub = proc_parser.add_subparsers(dest="proc_action")
+    proc_list_cmd = proc_sub.add_parser("list", help="List top resource-consuming processes")
+    proc_list_cmd.add_argument("--sort", choices=["cpu", "mem"], default="cpu", help="Sort criteria")
+    proc_list_cmd.add_argument("--limit", type=int, default=15, help="Number of processes to list")
+    
+    proc_kill_cmd = proc_sub.add_parser("kill", help="Send signal to process")
+    proc_kill_cmd.add_argument("pid", type=int, help="Target process PID")
+    proc_kill_cmd.add_argument("--force", "-9", action="store_true", help="Send SIGKILL instead of SIGTERM")
+
+    # Cron Scheduled Automation
+    cron_parser = subparsers.add_parser("cron", help="Manage automated cron maintenance jobs")
+    cron_sub = cron_parser.add_subparsers(dest="cron_action")
+    cron_sub.add_parser("list", help="List active scheduled jobs")
+    cron_run_cmd = cron_sub.add_parser("run", help="Run a scheduled cron job immediately")
+    cron_run_cmd.add_argument("cmd", help="Command or script to execute")
+
+    # User management
+    user_parser = subparsers.add_parser("user", help="User and group administration")
+    user_sub = user_parser.add_subparsers(dest="user_action")
+    user_sub.add_parser("list", help="List user accounts")
+    
+    add_user_cmd = user_sub.add_parser("add", help="Provision new user with least-privilege standards")
+    add_user_cmd.add_argument("username", help="Username to create")
+    add_user_cmd.add_argument("--groups", "-G", help="Supplementary groups (e.g. docker,adm)")
+    add_user_cmd.add_argument("--key", "-k", help="SSH public key string")
+    add_user_cmd.add_argument("--sudo", action="store_true", help="Grant sudo privileges")
+    add_user_cmd.add_argument("--nopasswd", action="store_true", help="Grant passwordless sudo")
+
+    # Service management
+    svc_parser = subparsers.add_parser("service", help="Systemd service inspection and controls")
+    svc_sub = svc_parser.add_subparsers(dest="svc_action")
+    svc_sub.add_parser("list", help="List core services and their active statuses")
+    svc_status_cmd = svc_sub.add_parser("status", help="Check status of a system service")
+    svc_status_cmd.add_argument("name", help="Service name (e.g., nginx, docker, ssh)")
+
+    for act in ["start", "stop", "restart", "reload", "enable", "disable"]:
+        act_cmd = svc_sub.add_parser(act, help=f"{act.capitalize()} a system service")
+        act_cmd.add_argument("name", help="Service name")
+
+    svc_sub.add_parser("health", help="Run automated service health watchdog")
+
+    # Disk command
+    disk_parser = subparsers.add_parser("disk", help="Disk and inode capacity checks")
+    disk_parser.add_argument("--warn", type=int, default=80, help="Warning threshold %")
+    disk_parser.add_argument("--crit", type=int, default=90, help="Critical threshold %")
+
+    # Backup command
+    backup_parser = subparsers.add_parser("backup", help="Timestamped, SHA256-verified backup engine")
+    backup_sub = backup_parser.add_subparsers(dest="backup_action")
+    backup_sub.add_parser("list", help="List available backup restore points")
+    run_b_cmd = backup_sub.add_parser("run", help="Create new timestamped backup")
+    run_b_cmd.add_argument("--target", "-t", action="append", help="Target directories to backup")
+    backup_sub.add_parser("verify", help="Verify latest backup checksum and tar integrity")
+    
+    restore_cmd = backup_sub.add_parser("restore", help="Restore backup archive")
+    restore_cmd.add_argument("archive", help="Path to backup archive file")
+    restore_cmd.add_argument("--to", required=True, help="Destination directory")
+
+    # Log command
+    log_parser = subparsers.add_parser("logs", help="Centralized log collection and analysis")
+    log_sub = log_parser.add_subparsers(dest="log_action")
+    log_sub.add_parser("collect", help="Aggregate, analyze and compress system logs")
+    log_tail_cmd = log_sub.add_parser("tail", help="Tail lines from a system log")
+    log_tail_cmd.add_argument("file", nargs="?", default="/var/log/syslog", help="Log file path")
+    log_tail_cmd.add_argument("--lines", "-n", type=int, default=30, help="Number of lines")
+
+    # Security command
+    sec_parser = subparsers.add_parser("security", help="Host security audit, open ports and UFW firewall")
+    sec_sub = sec_parser.add_subparsers(dest="sec_action")
+    sec_sub.add_parser("audit", help="Audit listening ports, firewall, and SSH posture")
+    sec_sub.add_parser("benchmark", help="Run CIS Security Benchmark Audit and compute score")
+    sec_sub.add_parser("remediate", help="Apply automated baseline security remediations")
+    
+    fw_cmd = sec_sub.add_parser("firewall", help="Apply baseline UFW firewall rules")
+    fw_cmd.add_argument("--ssh-port", type=int, default=22, help="SSH port to allow")
+
+    # Docker stack command
+    docker_parser = subparsers.add_parser("docker", help="Manage containerized application and Nginx stack")
+    docker_sub = docker_parser.add_subparsers(dest="docker_action")
+    docker_sub.add_parser("status", help="List running containers and health status")
+    docker_sub.add_parser("up", help="Build and start Docker Compose stack in background")
+    docker_sub.add_parser("down", help="Stop and remove Docker Compose stack")
+    docker_sub.add_parser("logs", help="View stack logs")
+    doc_tail_cmd = docker_sub.add_parser("tail", help="Tail logs for a container")
+    doc_tail_cmd.add_argument("container", help="Container name")
+
+    # Alert command
+    alert_parser = subparsers.add_parser("alert", help="Webhook notifications and alerting")
+    alert_sub = alert_parser.add_subparsers(dest="alert_action")
+    alert_sub.add_parser("test", help="Send test notification to configured webhook")
+
+    # Executive Report command
+    report_parser = subparsers.add_parser("report", help="Executive health and audit reporting")
+    report_parser.add_argument("--out", "-o", help="Save report to file path")
+
+    # Support --json anywhere in command line arguments without subparser conflicts
+    json_mode = False
+    args_list = list(sys.argv[1:])
+    while "--json" in args_list:
+        json_mode = True
+        args_list.remove("--json")
+    while "-j" in args_list:
+        json_mode = True
+        args_list.remove("-j")
+
+    args = parser.parse_args(args_list)
+    args.json = json_mode or getattr(args, "json", False)
+
+    if not args.command:
+        print_banner()
+        parser.print_help()
+        sys.exit(0)
+
+    # Resolve node from fleet if --node passed
+    fleet_mgr = FleetManager()
+    remote_host = args.remote
+    remote_user = args.user
+    key_file = args.key
+    port = args.port
+
+    if args.node:
+        target_n = fleet_mgr.get_node(args.node)
+        if not target_n:
+            for n in fleet_mgr.list_nodes():
+                if n["name"].lower() == args.node.lower():
+                    target_n = n
+                    break
+        if target_n:
+            if not target_n["is_local"]:
+                remote_host = target_n["host"]
+                remote_user = target_n["user"]
+                key_file = target_n.get("key_path")
+                port = target_n.get("port", 22)
+            else:
+                remote_host = None
+        else:
+            print(f"{RED}Error: Node '{args.node}' not found in fleet inventory.{RESET}")
+            sys.exit(1)
+
+    # Initialize connection
+    conn = HostConnection(
+        remote_host=remote_host,
+        remote_user=remote_user,
+        key_file=key_file,
+        port=port
+    )
+
+    # Handle Fleet Command
+    if args.command == "fleet":
+        if args.fleet_action == "list" or not args.fleet_action:
+            nodes = fleet_mgr.list_nodes()
+            if args.json:
+                print(json.dumps(nodes, indent=2))
+            else:
+                print(f"\n{BOLD}=== Managed Server Fleet Inventory ==={RESET}")
+                print(f"{'ID':<18} {'NAME':<24} {'HOST':<18} {'STATUS':<12} {'TAGS'}")
+                print("-" * 85)
+                for n in nodes:
+                    status_col = GREEN if n.get("status") == "online" else (YELLOW if n.get("status") == "configured" else RED)
+                    tags_str = ", ".join(n.get("tags", []))
+                    print(f"{n['id']:<18} {n['name']:<24} {n['host']:<18} {status_col}{n.get('status','unknown'):<12}{RESET} {tags_str}")
+        elif args.fleet_action == "ping":
+            if args.node_id:
+                res = fleet_mgr.ping_node(args.node_id)
+                if args.json:
+                    print(json.dumps(res, indent=2))
+                else:
+                    status_col = GREEN if res["status"] == "online" else RED
+                    print(f"Node {res['node_id']}: {status_col}{res['status'].upper()}{RESET} ({res.get('latency_ms', 0)} ms) - Hostname: {res.get('hostname')}")
+            else:
+                results = fleet_mgr.ping_all()
+                if args.json:
+                    print(json.dumps(results, indent=2))
+                else:
+                    print(f"\n{BOLD}=== Fleet Connectivity Ping Results ==={RESET}")
+                    for res in results:
+                        status_col = GREEN if res["status"] == "online" else RED
+                        print(f"• {res['name']:<25} [{status_col}{res['status'].upper():<8}{RESET}] Latency: {res.get('latency_ms', 0):>5} ms  Hostname: {res.get('hostname') or 'N/A'}")
+        elif args.fleet_action == "add":
+            tags = [t.strip() for t in args.tags.split(",")] if args.tags else []
+            new_node = fleet_mgr.add_node(
+                name=args.name,
+                host=args.host,
+                user=args.user,
+                port=args.port,
+                key_path=args.key,
+                tags=tags
+            )
+            print(f"{GREEN}✓ Added node '{new_node['name']}' (ID: {new_node['id']}) to fleet inventory.{RESET}")
+        elif args.fleet_action == "remove":
+            if fleet_mgr.remove_node(args.node_id):
+                print(f"{GREEN}✓ Node '{args.node_id}' removed from fleet inventory.{RESET}")
+            else:
+                print(f"{RED}Node '{args.node_id}' not found.{RESET}")
+
+    # Handle Process Command
+    elif args.command == "process":
+        pm = ProcessManager(conn)
+        if args.proc_action == "list" or not args.proc_action:
+            procs = pm.list_processes(limit=args.limit, sort_by=args.sort)
+            if args.json:
+                print(json.dumps(procs, indent=2))
+            else:
+                print(f"\n{BOLD}Top Running Processes (Sorted by {args.sort.upper()}):{RESET}")
+                print(f"{'PID':<8} {'USER':<12} {'%CPU':<6} {'%MEM':<6} {'RSS(MB)':<10} {'COMMAND'}")
+                print("-" * 75)
+                for p in procs:
+                    print(f"{p['pid']:<8} {p['user']:<12} {p['cpu_pct']:<6} {p['mem_pct']:<6} {p['rss_mb']:<10} {p['command'][:45]}")
+        elif args.proc_action == "kill":
+            res = pm.kill_process(args.pid, force=args.force)
+            if res["success"]:
+                print(f"{GREEN}✓ Sent SIG{res['signal']} to PID {args.pid} successfully.{RESET}")
+            else:
+                print(f"{RED}✗ Failed to kill PID {args.pid}: {res.get('error') or res.get('stderr')}{RESET}")
+
+    # Handle Cron
+    elif args.command == "cron":
+        cm = CronManager(conn)
+        if args.cron_action == "list" or not args.cron_action:
+            jobs = cm.list_jobs()
+            if args.json:
+                print(json.dumps(jobs, indent=2))
+            else:
+                print(f"\n{BOLD}=== Automated Cron Maintenance Schedules ==={RESET}")
+                print(f"{'SCHEDULE':<16} {'USER':<8} {'COMMAND'}")
+                print("-" * 70)
+                for j in jobs:
+                    print(f"{j['schedule']:<16} {j['user']:<8} {j['command']}")
+        elif args.cron_action == "run":
+            res = cm.run_job_now(args.cmd)
+            if res["success"]:
+                print(f"{GREEN}✓ Scheduled task executed successfully.{RESET}\n{res['output']}")
+            else:
+                print(f"{RED}✗ Task execution failed (Exit {res['exit_code']}): {res['output']}{RESET}")
+
+    # Handle Status
+    elif args.command == "status":
+        inspector = SystemInspector(conn)
+        overview = inspector.get_overview()
+        svc_mgr = ServiceManager(conn)
+        failed_services = svc_mgr.list_failed_services()
+        overview["failed_services"] = failed_services
+
+        if args.json:
+            print(json.dumps(overview, indent=2))
+        else:
+            print_banner()
+            print(f"{BOLD}Target Host:{RESET}        {CYAN}{overview['target']}{RESET}")
+            print(f"{BOLD}Hostname:{RESET}           {overview['hostname']}")
+            print(f"{BOLD}OS Distribution:{RESET}    {overview['os_release']}")
+            print(f"{BOLD}Kernel Release:{RESET}     {overview['kernel']}")
+            print(f"{BOLD}Uptime / Load:{RESET}      {overview['uptime']}")
+            if isinstance(overview.get("memory"), dict) and "total_mb" in overview["memory"]:
+                print(f"{BOLD}Memory:{RESET}             {overview['memory']['used_mb']} MB used / {overview['memory']['total_mb']} MB total")
+            
+            if failed_services:
+                print(f"{RED}⚠ Failed Services:{RESET} {', '.join(failed_services)}")
+            else:
+                print(f"{GREEN}✓ Systemd State:{RESET}   No failed systemd services detected")
+
+            print(f"\n{BOLD}Core Stack Status:{RESET}")
+            for s in ["nginx", "docker", "ssh"]:
+                st = svc_mgr.status(s)
+                status_str = f"{GREEN}ACTIVE{RESET}" if st["active"] else f"{YELLOW}INACTIVE / STOPPED{RESET}"
+                print(f"  • {s:<10} [{status_str}]")
+
+    # Handle User
+    elif args.command == "user":
+        user_mgr = UserManager(conn)
+        if args.user_action == "list" or not args.user_action:
+            users = user_mgr.list_users()
+            if args.json:
+                print(json.dumps(users, indent=2))
+            else:
+                print(f"\n{BOLD}User Accounts (Interactive & System Admins):{RESET}")
+                print(f"{'USERNAME':<15} {'UID':<8} {'GID':<8} {'HOME':<25} {'SHELL'}")
+                print("-" * 70)
+                for u in users:
+                    print(f"{u['username']:<15} {u['uid']:<8} {u['gid']:<8} {u['home']:<25} {u['shell']}")
+        elif args.user_action == "add":
+            res = user_mgr.add_user(
+                username=args.username,
+                additional_groups=args.groups,
+                ssh_pubkey=args.key,
+                sudo=args.sudo,
+                nopasswd=args.nopasswd
+            )
+            print(res["stdout"] or res["stderr"])
+
+    # Handle Service
+    elif args.command == "service":
+        svc_mgr = ServiceManager(conn)
+        if args.svc_action == "list" or not args.svc_action:
+            services = svc_mgr.list_services()
+            if args.json:
+                print(json.dumps(services, indent=2))
+            else:
+                print(f"\n{BOLD}=== Core System Services Status ==={RESET}")
+                for s in services:
+                    st_col = GREEN if s["active"] else YELLOW
+                    st_txt = "ACTIVE" if s["active"] else "INACTIVE"
+                    print(f"  • {s['service']:<12} [{st_col}{st_txt}{RESET}] ({s.get('engine', 'none')})")
+        elif args.svc_action == "status":
+            st = svc_mgr.status(args.name)
+            if args.json:
+                print(json.dumps(st, indent=2))
+            else:
+                print(st["raw_output"])
+        elif args.svc_action == "health":
+            code, out, _ = conn.run(f"./scripts/service_health.sh {'--json' if args.json else ''}")
+            print(out)
+        elif args.svc_action in ["start", "stop", "restart", "reload", "enable", "disable"]:
+            res = svc_mgr.execute_action(args.name, args.svc_action)
+            if res["success"]:
+                print(f"{GREEN}✓ Service '{args.name}' {args.svc_action} succeeded.{RESET}\n{res['stdout']}")
+            else:
+                print(f"{RED}✗ Service '{args.name}' {args.svc_action} failed: {res.get('error') or res.get('stderr')}{RESET}")
+                sys.exit(1)
+
+    # Handle Disk
+    elif args.command == "disk":
+        json_flag = "--json" if args.json else ""
+        code, out, err = conn.run(f"./scripts/disk_monitor.sh --warn {args.warn} --crit {args.crit} {json_flag}")
+        print(out or err)
+
+    # Handle Backup
+    elif args.command == "backup":
+        if args.backup_action == "list":
+            code, out, _ = conn.run("ls -lh /var/backups/serveradmin/backup_*.tar.gz 2>/dev/null || ls -lh /tmp/serveradmin/backups/backup_*.tar.gz 2>/dev/null || true")
+            if out.strip():
+                print(f"\n{BOLD}=== Available Backup Restore Points ==={RESET}")
+                print(out)
+            else:
+                print("No backups found in destination directory.")
+        elif args.backup_action == "run" or not args.backup_action:
+            target_flags = ""
+            if args.target:
+                target_flags = " ".join([f"--target {t}" for t in args.target])
+            code, out, err = conn.run(f"./scripts/backup_engine.sh {target_flags} {'--json' if args.json else ''}")
+            print(out or err)
+        elif args.backup_action == "verify":
+            code, out, err = conn.run(f"./scripts/backup_engine.sh --verify-latest {'--json' if args.json else ''}")
+            print(out or err)
+        elif args.backup_action == "restore":
+            code, out, err = conn.run(f"./scripts/backup_engine.sh --restore {args.archive} --restore-to {args.to}")
+            print(out or err)
+
+    # Handle Logs
+    elif args.command == "logs":
+        if args.log_action == "tail":
+            le = LogExplorer(conn)
+            res = le.view_log(args.file, lines=args.lines)
+            for l in res.get("lines", []):
+                print(l)
+        else:
+            code, out, err = conn.run(f"./scripts/log_collector.sh {'--json' if args.json else ''}")
+            print(out or err)
+
+    # Handle Security
+    elif args.command == "security":
+        if args.sec_action == "benchmark":
+            auditor = ComplianceAuditor(conn)
+            bench = auditor.run_benchmark()
+            if args.json:
+                print(json.dumps(bench, indent=2))
+            else:
+                print(f"\n{BOLD}=== CIS Security Hardening Benchmark Audit ==={RESET}")
+                grade_col = GREEN if bench["grade"] in ["A+", "A"] else (YELLOW if bench["grade"] == "B" else RED)
+                print(f"Compliance Score:  {grade_col}{bench['score']}% (Grade {bench['grade']}){RESET}")
+                print(f"Audit Summary:     {GREEN}{bench['passed_count']} Passed{RESET} / {RED}{bench['failed_count']} Failed{RESET} ({bench['total_checks']} total)")
+                print("-" * 80)
+                for c in bench["checks"]:
+                    mark = f"{GREEN}✓ PASS{RESET}" if c["passed"] else f"{RED}✗ FAIL{RESET}"
+                    print(f"[{mark}] {c['id']}: {c['name']}")
+                    if not c["passed"]:
+                        print(f"       {YELLOW}Remediation:{RESET} {c['remediation']}")
+        elif args.sec_action == "remediate":
+            auditor = ComplianceAuditor(conn)
+            res = auditor.remediate_baseline()
+            print(f"{GREEN}✓ Baseline security remediation completed.{RESET}")
+            for s in res["steps"]:
+                status = f"{GREEN}OK{RESET}" if s["success"] else f"{RED}FAIL{RESET}"
+                print(f"  • {s['step']}: [{status}]")
+        elif args.sec_action == "firewall":
+            auditor = SecurityAuditor(conn)
+            res = auditor.apply_firewall(ssh_port=args.ssh_port)
+            print(res["stdout"] or res["stderr"])
+        else:
+            auditor = SecurityAuditor(conn)
+            audit = auditor.audit_security()
+            if args.json:
+                print(json.dumps(audit, indent=2))
+            else:
+                print(f"\n{BOLD}=== Host Security Compliance & Audit ==={RESET}")
+                ssh_comp = audit.get("ssh_compliance", {})
+                root_status = f"{GREEN}PASS (Disabled){RESET}" if ssh_comp.get("root_login_disabled") else f"{YELLOW}CHECK (Root Login may be enabled){RESET}"
+                pwd_status = f"{GREEN}PASS (Disabled){RESET}" if ssh_comp.get("password_auth_disabled") else f"{YELLOW}CHECK (Password Auth enabled){RESET}"
+                print(f"SSH Root Login:             {root_status}")
+                print(f"SSH Password Authentication:{pwd_status}")
+                raw = audit.get("raw_output", "")
+                if raw:
+                    print("\n" + raw)
+
+    # Handle Docker stack
+    elif args.command == "docker":
+        ci = ContainerInspector(conn)
+        if args.docker_action == "tail":
+            res = ci.get_container_logs(args.container, tail=50)
+            print(res["logs"])
+        else:
+            compose_dir = os.path.join(PROJECT_ROOT, "app_stack")
+            if args.docker_action == "status" or not args.docker_action:
+                containers = ci.list_containers()
+                if args.json:
+                    print(json.dumps(containers, indent=2))
+                else:
+                    print(f"\n{BOLD}=== Containerized Applications & Services ==={RESET}")
+                    print(f"{'CONTAINER':<24} {'IMAGE':<25} {'STATUS':<20} {'PORTS'}")
+                    print("-" * 85)
+                    for c in containers:
+                        print(f"{c['name']:<24} {c['image'][:24]:<25} {c['status'][:19]:<20} {c['ports'][:25]}")
+            elif args.docker_action == "up":
+                code, out, err = conn.run(f"docker compose -f {compose_dir}/docker-compose.yml up -d --build")
+                print(out or err)
+            elif args.docker_action == "down":
+                code, out, err = conn.run(f"docker compose -f {compose_dir}/docker-compose.yml down")
+                print(out or err)
+            elif args.docker_action == "logs":
+                code, out, err = conn.run(f"docker compose -f {compose_dir}/docker-compose.yml logs --tail=50")
+                print(out or err)
+
+    # Handle Alerts
+    elif args.command == "alert":
+        notifier = AlertNotifier()
+        if args.alert_action == "test" or not args.alert_action:
+            res = notifier.send_notification(
+                title="Manual Alert Test",
+                message="This is a test notification from the ServerAdmin CLI.",
+                level="INFO",
+                details={"triggered_by": "CLI Operator"}
+            )
+            if res.get("sent"):
+                print(f"{GREEN}✓ Alert notification sent successfully.{RESET}")
+            else:
+                print(f"{YELLOW}⚠ Alert not sent: {res.get('reason') or res.get('error')}{RESET}")
+
+    # Handle Report
+    elif args.command == "report":
+        le = LogExplorer(conn)
+        rep = le.generate_executive_report()
+        if args.out:
+            with open(args.out, "w") as f:
+                f.write(rep)
+            print(f"{GREEN}✓ Executive audit report saved to: {args.out}{RESET}")
+        else:
+            print(rep)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "node-local",
+    "name": "Local Master Node",
+    "host": "localhost",
+    "user": "local",
+    "port": 22,
+    "key_path": "",
+    "tags": ["master", "local"],
+    "is_local": true,
+    "status": "online",
+    "last_check": null
+  },
+  {
+    "id": "node-prod-01",
+    "name": "Ubuntu Web/App Primary",
+    "host": "192.168.1.100",
+    "user": "ubuntu",
+    "port": 22,
+    "key_path": "~/.ssh/id_ed25519",
+    "tags": ["web", "docker", "prod"],
+    "is_local": false,
+    "status": "configured",
+    "last_check": null
+  }
+]
+

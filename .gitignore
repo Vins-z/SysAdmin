@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Runtime PIDs and logs
+data/services/*.pid
+data/services/*.log
+data/audit.log
+*.log
+

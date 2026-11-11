@@ -1,0 +1,14 @@
+{
+  "name": "serveradmin-webapp",
+  "version": "1.0.0",
+  "description": "Production Containerized Application for Linux Server Administration Lab",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1"
+  }
+}
+
